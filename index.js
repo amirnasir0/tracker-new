@@ -81,14 +81,67 @@ app.get('/check', async (req, res) => {
 
   await browser.close();
 
-  res.json({
-    url,
-    hasMetaPixelJs: hasMetaPixelScript || fbqAvailable,
-    hasMetaCAPI,
-    hasGA4Server,
-    totalRequests: requests.length,
-    trackingCookies: detectedCookies
-  });
+  const generateHtmlReport = (data) => {
+  const statusIcon = (val) => val ? '✅' : '❌';
+
+  const cookieRows = data.trackingCookies.map(c => `
+    <tr>
+      <td>${c.name}</td>
+      <td>${c.tracker}</td>
+      <td>${c.isFirstParty ? '1P' : '3P'}</td>
+      <td>${c.setBy.toUpperCase()}</td>
+      <td><a href="${c.relatedScript}" target="_blank">${c.relatedScript ? 'View Script' : '-'}</a></td>
+    </tr>
+  `).join('');
+
+  return `
+    <html>
+      <head>
+        <title>Tracking Checker Results</title>
+        <style>
+          body { font-family: Arial; padding: 2rem; }
+          table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+          th, td { border: 1px solid #ccc; padding: 0.5rem; text-align: left; }
+          th { background-color: #f5f5f5; }
+          h2 { margin-top: 2rem; }
+        </style>
+      </head>
+      <body>
+        <h1>Tracking Report for <a href="${data.url}" target="_blank">${data.url}</a></h1>
+        <p><strong>Total Network Requests:</strong> ${data.totalRequests}</p>
+
+        <h2>Tracking Summary</h2>
+        <ul>
+          <li>Meta Pixel JS: ${statusIcon(data.hasMetaPixelJs)}</li>
+          <li>Meta Conversions API: ${statusIcon(data.hasMetaCAPI)}</li>
+          <li>GA4 Server-Side: ${statusIcon(data.hasGA4Server)}</li>
+        </ul>
+
+        <h2>🍪 Tracking Cookies</h2>
+        <table>
+          <tr>
+            <th>Cookie Name</th>
+            <th>Tracker</th>
+            <th>1P/3P</th>
+            <th>Set By</th>
+            <th>Related Script</th>
+          </tr>
+          ${cookieRows}
+        </table>
+      </body>
+    </html>
+  `;
+};
+
+res.send(generateHtmlReport({
+  url,
+  hasMetaPixelJs: hasMetaPixelScript || fbqAvailable,
+  hasMetaCAPI,
+  hasGA4Server,
+  totalRequests: requests.length,
+  trackingCookies: detectedCookies
+}));
+
 });
 
 const PORT = process.env.PORT || 3000;
