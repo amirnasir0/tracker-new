@@ -34,7 +34,7 @@ app.get('/check', async (req, res) => {
   await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
 
   await page.evaluate(() => window.scrollBy(0, 500));
-  await new Promise(resolve => setTimeout(resolve, 4000)); // Allow more time for delayed scripts
+  await new Promise(resolve => setTimeout(resolve, 4000));
 
   const scriptUrls = await page.$$eval('script[src]', nodes =>
     nodes.map(n => n.src)
@@ -46,7 +46,7 @@ app.get('/check', async (req, res) => {
 
   const fbPixelIds = inlineScripts
     .map(code => {
-      const match = code.match(/fbq\(\s*['"]init['"],\s*['"](\d{10,20})['"]/);
+      const match = code.match(/fbq\(\s*['"]init['"],\s*['"](\d{10,20})['"])/);
       return match ? match[1] : null;
     })
     .filter(Boolean);
@@ -54,19 +54,19 @@ app.get('/check', async (req, res) => {
   const cookies = await page.cookies();
 
   const knownTrackers = [
-  { name: /^_ga/, label: 'Google Analytics' },
-  { name: /^_gid$/, label: 'Google Analytics' },
-  { name: /^_fbp/, label: 'Facebook Pixel' },
-  { name: /^gclid$/, label: 'Google Ads Auto Tagging' },
-  { name: /^FPID$/, label: 'Enhanced Conversions' },
-  { name: /^_cl/, label: 'Microsoft Clarity' },
-  { name: /^_tt/, label: 'TikTok Pixel' },
-  { name: /^ajs_/, label: 'Segment' },
-  { name: /^li_fat_id$/, label: 'LinkedIn Insight' },
-  { name: /^_hj/, label: 'Hotjar' },
-  { name: /^_pinterest_/, label: 'Pinterest Tag' },
-  { name: /^_twitter_sess$/, label: 'Twitter Pixel' }
-];
+    { name: /^_ga/, label: 'Google Analytics' },
+    { name: /^_gid$/, label: 'Google Analytics' },
+    { name: /^_fbp/, label: 'Facebook Pixel' },
+    { name: /^gclid$/, label: 'Google Ads Auto Tagging' },
+    { name: /^FPID$/, label: 'Enhanced Conversions' },
+    { name: /^_cl/, label: 'Microsoft Clarity' },
+    { name: /^_tt/, label: 'TikTok Pixel' },
+    { name: /^ajs_/, label: 'Segment' },
+    { name: /^li_fat_id$/, label: 'LinkedIn Insight' },
+    { name: /^_hj/, label: 'Hotjar' },
+    { name: /^_pinterest_/, label: 'Pinterest Tag' },
+    { name: /^_twitter_sess$/, label: 'Twitter Pixel' }
+  ];
 
   const detectedCookies = cookies.map(cookie => {
     const trackerMatch = knownTrackers.find(t => t.name.test(cookie.name));
@@ -86,17 +86,25 @@ app.get('/check', async (req, res) => {
     };
   });
 
-  const hasMetaCAPI = requests.some(u => u.includes('graph.facebook.com'));
+  const metaCapiDetected = requests.some(u =>
+    /graph\.facebook\.com\/v\d+\.\d+\/(events|purchase)/.test(u) ||
+    (u.includes('/events') && (u.includes('access_token') || u.includes('fbc=') || u.includes('fbp=') || u.includes('event_name')))
+  );
+  const hasMetaCAPI = metaCapiDetected;
+  const metaCapiNote = metaCapiDetected
+    ? '✅'
+    : '❓ Not directly detectable – may be enabled server-side (e.g. Shopify)';
+
   const hasGA4Server = requests.some(u => u.includes('google-analytics.com/g/collect'));
-const hasTikTokPixel = scriptUrls.some(url => url.includes('tiktok.com') || url.includes('analytics.tiktok.com'));
-const hasClarity = scriptUrls.some(url => url.includes('clarity.ms'));
-const hasSegment = scriptUrls.some(url => url.includes('cdn.segment.com'));
-const hasHotjar = scriptUrls.some(url => url.includes('hotjar.com'));
-const hasLinkedIn = scriptUrls.some(url => url.includes('ads.linkedin.com'));
-const hasPinterest = scriptUrls.some(url => url.includes('ct.pinterest.com'));
-const hasTwitter = scriptUrls.some(url => url.includes('ads-twitter.com'));
-const hasSnapchat = scriptUrls.some(url => url.includes('sc-static.net'));
-const hasGTM = scriptUrls.some(url => url.includes('googletagmanager.com/gtm.js'));
+  const hasTikTokPixel = scriptUrls.some(url => url.includes('tiktok.com') || url.includes('analytics.tiktok.com'));
+  const hasClarity = scriptUrls.some(url => url.includes('clarity.ms'));
+  const hasSegment = scriptUrls.some(url => url.includes('cdn.segment.com'));
+  const hasHotjar = scriptUrls.some(url => url.includes('hotjar.com'));
+  const hasLinkedIn = scriptUrls.some(url => url.includes('ads.linkedin.com'));
+  const hasPinterest = scriptUrls.some(url => url.includes('ct.pinterest.com'));
+  const hasTwitter = scriptUrls.some(url => url.includes('ads-twitter.com'));
+  const hasSnapchat = scriptUrls.some(url => url.includes('sc-static.net'));
+  const hasGTM = scriptUrls.some(url => url.includes('googletagmanager.com/gtm.js'));
   const hasMetaPixelScript = scriptUrls.some(url => url.includes('connect.facebook.net'));
   const fbqAvailable = await page.evaluate(() => typeof fbq === 'function').catch(() => false);
   const hasMetaPixelDetected = hasMetaPixelScript || fbqAvailable || fbPixelIds.length > 0;
@@ -138,19 +146,19 @@ const hasGTM = scriptUrls.some(url => url.includes('googletagmanager.com/gtm.js'
 
           <h2>Tracking Summary</h2>
           <ul>
-  <li>Meta Pixel JS: ${statusIcon(data.hasMetaPixelJs)}</li>
-  <li>Meta Conversions API: ${statusIcon(data.hasMetaCAPI)}</li>
-  <li>GA4 Server-Side: ${statusIcon(data.hasGA4Server)}</li>
-  <li>Google Tag Manager: ${statusIcon(data.hasGTM)}</li>
-  <li>TikTok Pixel: ${statusIcon(data.hasTikTokPixel)}</li>
-  <li>Microsoft Clarity: ${statusIcon(data.hasClarity)}</li>
-  <li>Segment: ${statusIcon(data.hasSegment)}</li>
-  <li>Hotjar: ${statusIcon(data.hasHotjar)}</li>
-  <li>LinkedIn Insight: ${statusIcon(data.hasLinkedIn)}</li>
-  <li>Pinterest Tag: ${statusIcon(data.hasPinterest)}</li>
-  <li>Twitter Pixel: ${statusIcon(data.hasTwitter)}</li>
-  <li>Snapchat Pixel: ${statusIcon(data.hasSnapchat)}</li>
-</ul>
+            <li>Meta Pixel JS: ${statusIcon(data.hasMetaPixelJs)}</li>
+            <li>Meta Conversions API: ${data.metaCapiNote}</li>
+            <li>GA4 Server-Side: ${statusIcon(data.hasGA4Server)}</li>
+            <li>Google Tag Manager: ${statusIcon(data.hasGTM)}</li>
+            <li>TikTok Pixel: ${statusIcon(data.hasTikTokPixel)}</li>
+            <li>Microsoft Clarity: ${statusIcon(data.hasClarity)}</li>
+            <li>Segment: ${statusIcon(data.hasSegment)}</li>
+            <li>Hotjar: ${statusIcon(data.hasHotjar)}</li>
+            <li>LinkedIn Insight: ${statusIcon(data.hasLinkedIn)}</li>
+            <li>Pinterest Tag: ${statusIcon(data.hasPinterest)}</li>
+            <li>Twitter Pixel: ${statusIcon(data.hasTwitter)}</li>
+            <li>Snapchat Pixel: ${statusIcon(data.hasSnapchat)}</li>
+          </ul>
 
           ${fbPixelList}
 
@@ -171,23 +179,24 @@ const hasGTM = scriptUrls.some(url => url.includes('googletagmanager.com/gtm.js'
   };
 
   res.send(generateHtmlReport({
-  url,
-  hasMetaPixelJs: hasMetaPixelDetected,
-  fbPixelIds,
-  hasMetaCAPI,
-  hasGA4Server,
-  hasTikTokPixel,
-  hasClarity,
-  hasSegment,
-  hasHotjar,
-  hasLinkedIn,
-  hasPinterest,
-  hasTwitter,
-  hasSnapchat,
-  hasGTM,
-  totalRequests: requests.length,
-  trackingCookies: detectedCookies
-}));
+    url,
+    hasMetaPixelJs: hasMetaPixelDetected,
+    fbPixelIds,
+    hasMetaCAPI,
+    metaCapiNote,
+    hasGA4Server,
+    hasTikTokPixel,
+    hasClarity,
+    hasSegment,
+    hasHotjar,
+    hasLinkedIn,
+    hasPinterest,
+    hasTwitter,
+    hasSnapchat,
+    hasGTM,
+    totalRequests: requests.length,
+    trackingCookies: detectedCookies
+  }));
 });
 
 const PORT = process.env.PORT || 3000;
