@@ -26,7 +26,8 @@ app.get('/check', async (req, res) => {
 
   // Scroll to trigger lazy-loaded pixels
   await page.evaluate(() => window.scrollBy(0, 500));
-  await page.waitForTimeout(1500);
+await new Promise(resolve => setTimeout(resolve, 1500));
+
 
   const scriptUrls = await page.$$eval('script[src]', scripts =>
     scripts.map(s => s.src)
