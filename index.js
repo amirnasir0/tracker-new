@@ -46,7 +46,7 @@ app.get('/check', async (req, res) => {
 
   const fbPixelIds = inlineScripts
     .map(code => {
-      const match = code.match(/fbq\(\s*['"]init['"],\s*['"](\d{10,20})['"])/);
+      const match = code.match(/fbq\(\s*['"]init['"],\s*['"](\d{10,20})['"]/);
       return match ? match[1] : null;
     })
     .filter(Boolean);
