@@ -22,8 +22,9 @@ app.get('/check', async (req, res) => {
 
   let requests = [];
   let setCookieHeaders = [];
+  let proxyTrackers = [];
 
-  page.on('request', req => requests.push(req.url()));
+  page.on('request', req => requests.push(req));
   page.on('response', async response => {
     const headers = response.headers();
     if (headers['set-cookie']) {
@@ -32,7 +33,6 @@ app.get('/check', async (req, res) => {
   });
 
   await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-
   await page.evaluate(() => window.scrollBy(0, 500));
   await new Promise(resolve => setTimeout(resolve, 4000));
 
@@ -86,25 +86,29 @@ app.get('/check', async (req, res) => {
     };
   });
 
-  const metaCapiDetected = requests.some(u =>
-    /graph\.facebook\.com\/v\d+\.\d+\/(events|purchase)/.test(u) ||
-    (u.includes('/events') && (u.includes('access_token') || u.includes('fbc=') || u.includes('fbp=') || u.includes('event_name')))
-  );
-  const hasMetaCAPI = metaCapiDetected;
-  const metaCapiNote = metaCapiDetected
-    ? '✅'
-    : '❓ Not directly detectable – may be enabled server-side (e.g. Shopify)';
+  for (let req of requests) {
+    try {
+      const url = req.url();
+      const method = req.method();
+      const domainMatch = url.includes(hostname);
+      const pathSuspicious = /track|log|event|data|collect|analytics|pixel/i.test(url);
+      const body = method === 'POST' ? (await req.postData()) : '';
+      const payloadSuspicious = body && /event_name|client_id|fbp|fbc/.test(body);
 
-  const hasGA4Server = requests.some(u => u.includes('google-analytics.com/g/collect'));
-  const hasTikTokPixel = scriptUrls.some(url => url.includes('tiktok.com') || url.includes('analytics.tiktok.com'));
-  const hasClarity = scriptUrls.some(url => url.includes('clarity.ms'));
-  const hasSegment = scriptUrls.some(url => url.includes('cdn.segment.com'));
-  const hasHotjar = scriptUrls.some(url => url.includes('hotjar.com'));
-  const hasLinkedIn = scriptUrls.some(url => url.includes('ads.linkedin.com'));
-  const hasPinterest = scriptUrls.some(url => url.includes('ct.pinterest.com'));
-  const hasTwitter = scriptUrls.some(url => url.includes('ads-twitter.com'));
-  const hasSnapchat = scriptUrls.some(url => url.includes('sc-static.net'));
-  const hasGTM = scriptUrls.some(url => url.includes('googletagmanager.com/gtm.js'));
+      let score = 0;
+      if (domainMatch) score += 30;
+      if (pathSuspicious) score += 20;
+      if (method === 'POST') score += 10;
+      if (payloadSuspicious) score += 40;
+
+      if (score >= 60) {
+        proxyTrackers.push({ url, method, score });
+      }
+    } catch {}
+  }
+
+  const hasMetaCAPI = requests.some(r => r.url().includes('graph.facebook.com')) || proxyTrackers.length > 0;
+  const hasGA4Server = requests.some(r => r.url().includes('google-analytics.com/g/collect'));
   const hasMetaPixelScript = scriptUrls.some(url => url.includes('connect.facebook.net'));
   const fbqAvailable = await page.evaluate(() => typeof fbq === 'function').catch(() => false);
   const hasMetaPixelDetected = hasMetaPixelScript || fbqAvailable || fbPixelIds.length > 0;
@@ -121,12 +125,15 @@ app.get('/check', async (req, res) => {
         <td>${c.isFirstParty ? '1P' : '3P'}</td>
         <td>${c.setBy.toUpperCase()}</td>
         <td><a href="${c.relatedScript}" target="_blank">${c.relatedScript ? 'View Script' : '-'}</a></td>
-      </tr>
-    `).join('');
+      </tr>`).join('');
 
-    const fbPixelList = data.fbPixelIds.length > 0
-      ? `<p><strong>Detected Facebook Pixel IDs:</strong> ${data.fbPixelIds.join(', ')}</p>`
-      : '';
+    const proxyRows = data.proxyTrackers.map(p => `
+      <tr>
+        <td>${p.url}</td>
+        <td>${p.method}</td>
+        <td>${p.score}</td>
+        <td>Likely Server-side</td>
+      </tr>`).join('');
 
     return `
       <html>
@@ -147,20 +154,9 @@ app.get('/check', async (req, res) => {
           <h2>Tracking Summary</h2>
           <ul>
             <li>Meta Pixel JS: ${statusIcon(data.hasMetaPixelJs)}</li>
-            <li>Meta Conversions API: ${data.metaCapiNote}</li>
+            <li>Meta Conversions API: ${statusIcon(data.hasMetaCAPI)}</li>
             <li>GA4 Server-Side: ${statusIcon(data.hasGA4Server)}</li>
-            <li>Google Tag Manager: ${statusIcon(data.hasGTM)}</li>
-            <li>TikTok Pixel: ${statusIcon(data.hasTikTokPixel)}</li>
-            <li>Microsoft Clarity: ${statusIcon(data.hasClarity)}</li>
-            <li>Segment: ${statusIcon(data.hasSegment)}</li>
-            <li>Hotjar: ${statusIcon(data.hasHotjar)}</li>
-            <li>LinkedIn Insight: ${statusIcon(data.hasLinkedIn)}</li>
-            <li>Pinterest Tag: ${statusIcon(data.hasPinterest)}</li>
-            <li>Twitter Pixel: ${statusIcon(data.hasTwitter)}</li>
-            <li>Snapchat Pixel: ${statusIcon(data.hasSnapchat)}</li>
           </ul>
-
-          ${fbPixelList}
 
           <h2>🍪 Tracking Cookies</h2>
           <table>
@@ -173,6 +169,17 @@ app.get('/check', async (req, res) => {
             </tr>
             ${cookieRows}
           </table>
+
+          <h2>🔍 Proxy-Based Tracking Requests</h2>
+          <table>
+            <tr>
+              <th>URL</th>
+              <th>Method</th>
+              <th>Score</th>
+              <th>Type</th>
+            </tr>
+            ${proxyRows}
+          </table>
         </body>
       </html>
     `;
@@ -181,21 +188,12 @@ app.get('/check', async (req, res) => {
   res.send(generateHtmlReport({
     url,
     hasMetaPixelJs: hasMetaPixelDetected,
-    fbPixelIds,
     hasMetaCAPI,
-    metaCapiNote,
     hasGA4Server,
-    hasTikTokPixel,
-    hasClarity,
-    hasSegment,
-    hasHotjar,
-    hasLinkedIn,
-    hasPinterest,
-    hasTwitter,
-    hasSnapchat,
-    hasGTM,
+    fbPixelIds,
     totalRequests: requests.length,
-    trackingCookies: detectedCookies
+    trackingCookies: detectedCookies,
+    proxyTrackers
   }));
 });
 
