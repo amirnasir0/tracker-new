@@ -37,7 +37,8 @@ app.get('/check', async (req, res) => {
   await new Promise(resolve => setTimeout(resolve, 4000));
 
   const scriptUrls = await page.$$eval('script[src]', nodes => nodes.map(n => n.src));
-  const inlineScripts = await page.$$eval('script', scripts => scripts.map(s => s.innerText));
+
+  const inlineScripts = await page.$$eval('script', scripts => scripts.map(s => s.innerText || ''));
 
   const fbPixelIds = inlineScripts
     .map(code => {
@@ -46,7 +47,14 @@ app.get('/check', async (req, res) => {
     })
     .filter(Boolean);
 
+  const shopifyCapiDetected = inlineScripts.some(script =>
+    script.includes('trekkie.load') &&
+    script.includes('facebookCapiEnabled') &&
+    script.includes('true')
+  );
+
   const cookies = await page.cookies();
+
   const knownTrackers = [
     { name: /^_ga/, label: 'Google Analytics' },
     { name: /^_gid$/, label: 'Google Analytics' },
@@ -62,23 +70,11 @@ app.get('/check', async (req, res) => {
     { name: /^_twitter_sess$/, label: 'Twitter Pixel' }
   ];
 
-  const inlineCookieMap = {};
-  inlineScripts.forEach((code, index) => {
-    const matches = code.match(/document\.cookie\s*=\s*['"]([^=;]+)=/g);
-    if (matches) {
-      matches.forEach(m => {
-        const name = m.match(/['"]([^=;]+)=/)[1];
-        inlineCookieMap[name] = `inline script #${index + 1}`;
-      });
-    }
-  });
-
   const detectedCookies = cookies.map(cookie => {
     const trackerMatch = knownTrackers.find(t => t.name.test(cookie.name));
     const isFirstParty = cookie.domain.includes(hostname);
-    const inlineSource = inlineCookieMap[cookie.name];
-    const setBy = setCookieHeaders.some(h => h.header.includes(cookie.name)) ? 'http' : inlineSource ? 'js-inline' : 'js';
-    const relatedScript = inlineSource || setCookieHeaders.find(h => h.header.includes(cookie.name))?.url || null;
+    const relatedScript = scriptUrls.find(src => src.includes(cookie.domain.replace(/^\./, '')));
+    const setBy = setCookieHeaders.some(h => h.header.includes(cookie.name)) ? 'http' : 'js';
 
     return {
       name: cookie.name,
@@ -86,7 +82,7 @@ app.get('/check', async (req, res) => {
       isFirstParty,
       tracker: trackerMatch ? trackerMatch.label : 'Unknown',
       setBy,
-      relatedScript
+      relatedScript: relatedScript || null
     };
   });
 
@@ -111,7 +107,7 @@ app.get('/check', async (req, res) => {
     } catch {}
   }
 
-  const hasMetaCAPI = requests.some(r => r.url().includes('graph.facebook.com')) || proxyTrackers.length > 0;
+  const hasMetaCAPI = requests.some(r => r.url().includes('graph.facebook.com')) || proxyTrackers.length > 0 || shopifyCapiDetected;
   const hasGA4Server = requests.some(r => r.url().includes('google-analytics.com/g/collect'));
   const hasMetaPixelScript = scriptUrls.some(url => url.includes('connect.facebook.net'));
   const fbqAvailable = await page.evaluate(() => typeof fbq === 'function').catch(() => false);
@@ -122,18 +118,13 @@ app.get('/check', async (req, res) => {
   const generateHtmlReport = (data) => {
     const statusIcon = (val) => val ? '✅' : '❌';
 
-    const trackerBadge = (label) => {
-      const cssClass = label.toLowerCase().replace(/\s+/g, '-');
-      return `<span class="badge ${cssClass}">${label}</span>`;
-    };
-
     const cookieRows = data.trackingCookies.map(c => `
       <tr>
         <td>${c.name}</td>
-        <td>${trackerBadge(c.tracker)}</td>
+        <td>${c.tracker}</td>
         <td>${c.isFirstParty ? '1P' : '3P'}</td>
         <td>${c.setBy.toUpperCase()}</td>
-        <td>${c.relatedScript ? (c.relatedScript.startsWith('http') ? `<a href="${c.relatedScript}" target="_blank">View</a>` : c.relatedScript) : '-'}</td>
+        <td><a href="${c.relatedScript}" target="_blank">${c.relatedScript ? 'View Script' : '-'}</a></td>
       </tr>`).join('');
 
     const proxyRows = data.proxyTrackers.map(p => `
@@ -154,19 +145,6 @@ app.get('/check', async (req, res) => {
             th, td { border: 1px solid #ccc; padding: 0.5rem; text-align: left; }
             th { background-color: #f5f5f5; }
             h2 { margin-top: 2rem; }
-            .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; color: white; font-weight: bold; }
-            .google-analytics { background-color: #3367d6; }
-            .facebook-pixel { background-color: #4267B2; }
-            .enhanced-conversions { background-color: #1c6ef2; }
-            .google-ads-auto-tagging { background-color: #fbbc04; color: black; }
-            .microsoft-clarity { background-color: #0078d4; }
-            .tiktok-pixel { background-color: #010101; }
-            .segment { background-color: #00B37F; }
-            .linkedin-insight { background-color: #0072b1; }
-            .hotjar { background-color: #ef4b3f; }
-            .pinterest-tag { background-color: #e60023; }
-            .twitter-pixel { background-color: #1DA1F2; }
-            .unknown { background-color: #999; }
           </style>
         </head>
         <body>
@@ -178,6 +156,7 @@ app.get('/check', async (req, res) => {
             <li>Meta Pixel JS: ${statusIcon(data.hasMetaPixelJs)}</li>
             <li>Meta Conversions API: ${statusIcon(data.hasMetaCAPI)}</li>
             <li>GA4 Server-Side: ${statusIcon(data.hasGA4Server)}</li>
+            <li>Shopify CAPI Detected: ${statusIcon(data.shopifyCapiDetected)}</li>
           </ul>
 
           <h2>🍪 Tracking Cookies</h2>
@@ -213,6 +192,7 @@ app.get('/check', async (req, res) => {
     hasMetaCAPI,
     hasGA4Server,
     fbPixelIds,
+    shopifyCapiDetected,
     totalRequests: requests.length,
     trackingCookies: detectedCookies,
     proxyTrackers
