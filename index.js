@@ -32,7 +32,13 @@ app.get('/check', async (req, res) => {
     }
   });
 
-  await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+  try {
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 90000 });
+  } catch (error) {
+    await browser.close();
+    return res.status(504).send(`Page load timed out: ${error.message}`);
+  }
+
   await page.evaluate(() => window.scrollBy(0, 500));
   await new Promise(resolve => setTimeout(resolve, 4000));
 
