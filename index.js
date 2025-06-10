@@ -36,12 +36,9 @@ app.get('/check', async (req, res) => {
   await page.evaluate(() => window.scrollBy(0, 500));
   await new Promise(resolve => setTimeout(resolve, 4000));
 
-  const scriptUrls = await page.$$eval('script[src]', nodes =>
-    nodes.map(n => n.src)
-  );
-
+  const scriptUrls = await page.$$eval('script[src]', nodes => nodes.map(n => n.src));
   const inlineScripts = await page.$$eval('script', scripts =>
-    scripts.map(s => s.innerText).filter(js => js.includes('fbq'))
+    scripts.map(s => s.innerText)
   );
 
   const fbPixelIds = inlineScripts
@@ -52,7 +49,6 @@ app.get('/check', async (req, res) => {
     .filter(Boolean);
 
   const cookies = await page.cookies();
-
   const knownTrackers = [
     { name: /^_ga/, label: 'Google Analytics' },
     { name: /^_gid$/, label: 'Google Analytics' },
@@ -68,13 +64,25 @@ app.get('/check', async (req, res) => {
     { name: /^_twitter_sess$/, label: 'Twitter Pixel' }
   ];
 
+  const inlineCookieMap = {};
+  inlineScripts.forEach((code, index) => {
+    const matches = code.match(/document\.cookie\s*=\s*["']([^=;]+)=/g);
+    if (matches) {
+      matches.forEach(m => {
+        const name = m.match(/["']([^=;]+)=/)[1];
+        inlineCookieMap[name] = `inline script #${index + 1}`;
+      });
+    }
+  });
+
   const detectedCookies = cookies.map(cookie => {
     const trackerMatch = knownTrackers.find(t => t.name.test(cookie.name));
     const isFirstParty = cookie.domain.includes(hostname);
-    const relatedScript = scriptUrls.find(src =>
-      src.includes(cookie.domain.replace(/^\./, ''))
-    );
-    const setBy = setCookieHeaders.some(h => h.header.includes(cookie.name)) ? 'http' : 'js';
+    const inlineSource = inlineCookieMap[cookie.name];
+    const setBy = setCookieHeaders.some(h => h.header.includes(cookie.name)) ? 'http' :
+                  inlineSource ? 'js-inline' : 'js';
+
+    const relatedScript = inlineSource || setCookieHeaders.find(h => h.header.includes(cookie.name))?.url || null;
 
     return {
       name: cookie.name,
@@ -82,7 +90,7 @@ app.get('/check', async (req, res) => {
       isFirstParty,
       tracker: trackerMatch ? trackerMatch.label : 'Unknown',
       setBy,
-      relatedScript: relatedScript || null
+      relatedScript
     };
   });
 
@@ -124,7 +132,7 @@ app.get('/check', async (req, res) => {
         <td>${c.tracker}</td>
         <td>${c.isFirstParty ? '1P' : '3P'}</td>
         <td>${c.setBy.toUpperCase()}</td>
-        <td><a href="${c.relatedScript}" target="_blank">${c.relatedScript ? 'View Script' : '-'}</a></td>
+        <td>${c.relatedScript ? (c.relatedScript.startsWith('http') ? `<a href="${c.relatedScript}" target="_blank">View</a>` : c.relatedScript) : '-'}</td>
       </tr>`).join('');
 
     const proxyRows = data.proxyTrackers.map(p => `
