@@ -18,8 +18,9 @@ app.get('/check', async (req, res) => {
   });
 
   const page = await browser.newPage();
-  const hostname = new URL(url).hostname;
+  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36');
 
+  const hostname = new URL(url).hostname;
   let requests = [];
   let setCookieHeaders = [];
   let proxyTrackers = [];
@@ -33,17 +34,16 @@ app.get('/check', async (req, res) => {
   });
 
   try {
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 90000 });
-  } catch (error) {
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 80000 });
+  } catch (err) {
     await browser.close();
-    return res.status(504).send(`Page load timed out: ${error.message}`);
+    return res.status(500).send(`Failed to load page: ${err.message}`);
   }
 
   await page.evaluate(() => window.scrollBy(0, 500));
-  await new Promise(resolve => setTimeout(resolve, 4000));
+  await new Promise(resolve => setTimeout(resolve, 6000));
 
   const scriptUrls = await page.$$eval('script[src]', nodes => nodes.map(n => n.src));
-
   const inlineScripts = await page.$$eval('script', scripts => scripts.map(s => s.innerText || ''));
 
   const fbPixelIds = inlineScripts
@@ -60,7 +60,6 @@ app.get('/check', async (req, res) => {
   );
 
   const cookies = await page.cookies();
-
   const knownTrackers = [
     { name: /^_ga/, label: 'Google Analytics' },
     { name: /^_gid$/, label: 'Google Analytics' },
