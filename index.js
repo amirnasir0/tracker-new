@@ -37,13 +37,11 @@ app.get('/check', async (req, res) => {
   await new Promise(resolve => setTimeout(resolve, 4000));
 
   const scriptUrls = await page.$$eval('script[src]', nodes => nodes.map(n => n.src));
-  const inlineScripts = await page.$$eval('script', scripts =>
-    scripts.map(s => s.innerText)
-  );
+  const inlineScripts = await page.$$eval('script', scripts => scripts.map(s => s.innerText));
 
   const fbPixelIds = inlineScripts
     .map(code => {
-      const match = code.match(/fbq\(\s*['"]init['"],\s*['"](\d{10,20})['"]/);
+      const match = code.match(/fbq\(\s*['"]init['"],\s*['"](\d{10,20})['"]\)/);
       return match ? match[1] : null;
     })
     .filter(Boolean);
@@ -66,10 +64,10 @@ app.get('/check', async (req, res) => {
 
   const inlineCookieMap = {};
   inlineScripts.forEach((code, index) => {
-    const matches = code.match(/document\.cookie\s*=\s*["']([^=;]+)=/g);
+    const matches = code.match(/document\.cookie\s*=\s*['"]([^=;]+)=/g);
     if (matches) {
       matches.forEach(m => {
-        const name = m.match(/["']([^=;]+)=/)[1];
+        const name = m.match(/['"]([^=;]+)=/)[1];
         inlineCookieMap[name] = `inline script #${index + 1}`;
       });
     }
@@ -79,9 +77,7 @@ app.get('/check', async (req, res) => {
     const trackerMatch = knownTrackers.find(t => t.name.test(cookie.name));
     const isFirstParty = cookie.domain.includes(hostname);
     const inlineSource = inlineCookieMap[cookie.name];
-    const setBy = setCookieHeaders.some(h => h.header.includes(cookie.name)) ? 'http' :
-                  inlineSource ? 'js-inline' : 'js';
-
+    const setBy = setCookieHeaders.some(h => h.header.includes(cookie.name)) ? 'http' : inlineSource ? 'js-inline' : 'js';
     const relatedScript = inlineSource || setCookieHeaders.find(h => h.header.includes(cookie.name))?.url || null;
 
     return {
@@ -126,10 +122,15 @@ app.get('/check', async (req, res) => {
   const generateHtmlReport = (data) => {
     const statusIcon = (val) => val ? '✅' : '❌';
 
+    const trackerBadge = (label) => {
+      const cssClass = label.toLowerCase().replace(/\s+/g, '-');
+      return `<span class="badge ${cssClass}">${label}</span>`;
+    };
+
     const cookieRows = data.trackingCookies.map(c => `
       <tr>
         <td>${c.name}</td>
-        <td>${c.tracker}</td>
+        <td>${trackerBadge(c.tracker)}</td>
         <td>${c.isFirstParty ? '1P' : '3P'}</td>
         <td>${c.setBy.toUpperCase()}</td>
         <td>${c.relatedScript ? (c.relatedScript.startsWith('http') ? `<a href="${c.relatedScript}" target="_blank">View</a>` : c.relatedScript) : '-'}</td>
@@ -153,6 +154,19 @@ app.get('/check', async (req, res) => {
             th, td { border: 1px solid #ccc; padding: 0.5rem; text-align: left; }
             th { background-color: #f5f5f5; }
             h2 { margin-top: 2rem; }
+            .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; color: white; font-weight: bold; }
+            .google-analytics { background-color: #3367d6; }
+            .facebook-pixel { background-color: #4267B2; }
+            .enhanced-conversions { background-color: #1c6ef2; }
+            .google-ads-auto-tagging { background-color: #fbbc04; color: black; }
+            .microsoft-clarity { background-color: #0078d4; }
+            .tiktok-pixel { background-color: #010101; }
+            .segment { background-color: #00B37F; }
+            .linkedin-insight { background-color: #0072b1; }
+            .hotjar { background-color: #ef4b3f; }
+            .pinterest-tag { background-color: #e60023; }
+            .twitter-pixel { background-color: #1DA1F2; }
+            .unknown { background-color: #999; }
           </style>
         </head>
         <body>
